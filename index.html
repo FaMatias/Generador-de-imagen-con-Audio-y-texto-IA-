@@ -108,7 +108,8 @@
             // Añadir un prompt específico para que el personaje tenga un fondo blanco o simple
             // Esto ayuda a que el modelo no genere un fondo complejo para el personaje
             const finalPrompt = isCharacter ? `${prompt} against a simple white background, no complex scene` : prompt;
-
+            
+            // Usamos el modelo imagen-3.0-generate-002, que es más fiable.
             const payload = { 
                 instances: { prompt: finalPrompt }, 
                 parameters: { "sampleCount": 1 } 
@@ -128,8 +129,12 @@
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify(payload)
                     });
-                    if (response.status !== 429) { // 429 Too Many Requests
+                    if (response.ok) {
                         break;
+                    }
+                    if (response.status !== 429) { // No reintentar si no es un error de demasiadas solicitudes
+                        console.error(`API response was not ok: ${response.status} ${response.statusText}`);
+                        throw new Error('Failed to fetch image from API.');
                     }
                     retries++;
                     const delay = initialDelay * Math.pow(2, retries - 1);
@@ -140,7 +145,7 @@
                     break;
                 }
             }
-
+            
             if (!response || !response.ok) {
                 throw new Error('Failed to fetch image from API.');
             }
@@ -205,7 +210,7 @@
                 
             } catch (error) {
                 console.error('Error al generar las imágenes:', error);
-                alert('Ocurrió un error al generar las imágenes. Inténtalo de nuevo.');
+                alert(`Ocurrió un error al generar las imágenes. Por favor, revisa la consola para más detalles. Error: ${error.message}`);
                 loadingIndicator.classList.add('hidden');
                 generateBtn.disabled = false;
                 generateBtn.innerHTML = 'Generar y Reproducir';
