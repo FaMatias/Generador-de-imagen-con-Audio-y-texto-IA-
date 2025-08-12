@@ -123,8 +123,9 @@
                 instances: { prompt: finalPrompt },
                 parameters: { "sampleCount": 1 }
             };
-            const apiKey = "";
-            const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/imagen-3.0-generate-002:predict?key=${apiKey}`;
+            // Se ha corregido la URL para que no incluya la variable de la API key,
+            // permitiendo que el entorno Canvas la inyecte automáticamente.
+            const apiUrl = "https://generativelanguage.googleapis.com/v1beta/models/imagen-3.0-generate-002:predict?key=";
             
             let response = null;
             let retries = 0;
