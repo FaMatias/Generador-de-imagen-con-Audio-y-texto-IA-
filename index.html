@@ -65,6 +65,7 @@
                 <div class="spinner"></div>
                 <p class="mt-2 text-gray-400" id="loadingText">Generando imágenes...</p>
             </div>
+            <div id="messageBox" class="hidden mt-4 p-4 rounded-xl bg-red-800 text-white shadow-lg"></div>
         </div>
 
         <!-- Área de visualización (derecha) -->
@@ -85,6 +86,7 @@
         const loadingText = document.getElementById('loadingText');
         const visualizerCanvas = document.getElementById('visualizerCanvas');
         const placeholder = document.getElementById('placeholder');
+        const messageBox = document.getElementById('messageBox');
         const ctx = visualizerCanvas.getContext('2d');
 
         let audioContext, analyser, source, dataArray;
@@ -94,6 +96,16 @@
         let characterImage = new Image();
         let isBackgroundLoaded = false;
         let isCharacterLoaded = false;
+        let isAudioLoaded = false;
+
+        function showMessage(message) {
+            messageBox.textContent = message;
+            messageBox.classList.remove('hidden');
+        }
+
+        function hideMessage() {
+            messageBox.classList.add('hidden');
+        }
 
         function resizeCanvas() {
             visualizerCanvas.width = visualizerCanvas.clientWidth;
@@ -105,14 +117,11 @@
 
         // Función para llamar a la API de generación de imágenes
         async function generateAIImage(prompt, isCharacter = false) {
-            // Añadir un prompt específico para que el personaje tenga un fondo blanco o simple
-            // Esto ayuda a que el modelo no genere un fondo complejo para el personaje
             const finalPrompt = isCharacter ? `${prompt} against a simple white background, no complex scene` : prompt;
             
-            // Usamos el modelo imagen-3.0-generate-002, que es más fiable.
-            const payload = { 
-                instances: { prompt: finalPrompt }, 
-                parameters: { "sampleCount": 1 } 
+            const payload = {
+                instances: { prompt: finalPrompt },
+                parameters: { "sampleCount": 1 }
             };
             const apiKey = "";
             const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/imagen-3.0-generate-002:predict?key=${apiKey}`;
@@ -132,7 +141,7 @@
                     if (response.ok) {
                         break;
                     }
-                    if (response.status !== 429) { // No reintentar si no es un error de demasiadas solicitudes
+                    if (response.status !== 429) {
                         console.error(`API response was not ok: ${response.status} ${response.statusText}`);
                         throw new Error('Failed to fetch image from API.');
                     }
@@ -158,11 +167,12 @@
             }
         }
         
-        // Función principal para generar imagen y empezar a reproducir
         generateBtn.addEventListener('click', async () => {
             if (audioUpload.files.length === 0 || backgroundPromptInput.value.trim() === '' || characterPromptInput.value.trim() === '') {
+                showMessage("Por favor, sube una canción y describe tanto el fondo como el personaje.");
                 return;
             }
+            hideMessage();
 
             if (isPlaying) {
                 source.stop();
@@ -189,35 +199,41 @@
 
                 // Cargar las imágenes
                 loadingText.textContent = 'Cargando imágenes...';
+                isBackgroundLoaded = false;
+                isCharacterLoaded = false;
                 
-                backgroundImage.onload = () => {
-                    isBackgroundLoaded = true;
-                    if (isCharacterLoaded) startAudioAndAnimation();
-                };
-                backgroundImage.onerror = () => {
-                    throw new Error('Error al cargar la imagen de fondo.');
-                };
-                backgroundImage.src = backgroundUrl;
+                let backgroundPromiseLoaded = new Promise((resolve, reject) => {
+                    backgroundImage.onload = () => {
+                        isBackgroundLoaded = true;
+                        resolve();
+                    };
+                    backgroundImage.onerror = () => reject('Error al cargar la imagen de fondo.');
+                    backgroundImage.src = backgroundUrl;
+                });
+                
+                let characterPromiseLoaded = new Promise((resolve, reject) => {
+                    characterImage.onload = () => {
+                        isCharacterLoaded = true;
+                        resolve();
+                    };
+                    characterImage.onerror = () => reject('Error al cargar la imagen del personaje.');
+                    characterImage.src = characterUrl;
+                });
 
-                characterImage.onload = () => {
-                    isCharacterLoaded = true;
-                    if (isBackgroundLoaded) startAudioAndAnimation();
-                };
-                characterImage.onerror = () => {
-                    throw new Error('Error al cargar la imagen del personaje.');
-                };
-                characterImage.src = characterUrl;
+                await Promise.all([backgroundPromiseLoaded, characterPromiseLoaded]);
+                
+                await startAudio();
                 
             } catch (error) {
                 console.error('Error al generar las imágenes:', error);
-                alert(`Ocurrió un error al generar las imágenes. Por favor, revisa la consola para más detalles. Error: ${error.message}`);
+                showMessage(`Ocurrió un error al generar las imágenes. Error: ${error.message}`);
                 loadingIndicator.classList.add('hidden');
                 generateBtn.disabled = false;
                 generateBtn.innerHTML = 'Generar y Reproducir';
             }
         });
 
-        async function startAudioAndAnimation() {
+        async function startAudio() {
             try {
                 // Configurar el contexto de audio
                 audioContext = new (window.AudioContext || window.webkitAudioContext)();
@@ -237,13 +253,14 @@
 
                 source.start(0);
                 isPlaying = true;
+                isAudioLoaded = true;
                 generateBtn.textContent = 'Detener';
                 
                 draw(); // Iniciar la animación
                 
             } catch (error) {
                 console.error('Error al procesar el audio:', error);
-                alert('Ocurrió un error al cargar el audio. Inténtalo de nuevo.');
+                showMessage('Ocurrió un error al cargar el audio. Inténtalo de nuevo.');
             } finally {
                 loadingIndicator.classList.add('hidden');
                 generateBtn.disabled = false;
@@ -267,15 +284,15 @@
                 const maxFrequency = Math.max(...dataArray);
 
                 // Calcular el rebote y el movimiento en base al ritmo para el personaje
-                const bounce = maxFrequency / 255 * 50; 
+                const bounce = maxFrequency / 255 * 50;
                 const scale = 1 + (maxFrequency / 255) * 0.1;
                 const rotation = (averageFrequency / 255) * 0.05 - 0.025;
                 
                 // Posición del personaje
-                const charWidth = visualizerCanvas.width * 0.4; // Ajustar tamaño del personaje
+                const charWidth = visualizerCanvas.width * 0.4;
                 const charHeight = (charWidth / characterImage.width) * characterImage.height;
                 const x = (visualizerCanvas.width - charWidth) / 2;
-                const y = visualizerCanvas.height - charHeight - bounce - 20; // Posicionar en la parte inferior y mover hacia arriba
+                const y = visualizerCanvas.height - charHeight - bounce - 20;
 
                 ctx.save();
                 ctx.translate(x + charWidth / 2, y + charHeight / 2);
@@ -286,6 +303,7 @@
             }
         }
         
+        // Manejar el final del audio
         source?.addEventListener('ended', () => {
             isPlaying = false;
             generateBtn.textContent = 'Generar y Reproducir';
