@@ -1,0 +1,291 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Maestro de Ritmo Visual con IA</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;700&family=Playfair+Display:wght@400;700&family=Montserrat:wght@400;700&display=swap');
+        
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #1f2937;
+            color: #d1d5db;
+        }
+
+        .spinner {
+            border: 4px solid rgba(255, 255, 255, 0.2);
+            border-left-color: #6366f1;
+            border-radius: 50%;
+            width: 30px;
+            height: 30px;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            to {
+                transform: rotate(360deg);
+            }
+        }
+    </style>
+</head>
+<body class="p-4 flex flex-col items-center justify-center min-h-screen">
+    <div class="bg-gray-800 p-8 rounded-2xl shadow-xl w-full max-w-7xl mx-auto flex flex-col lg:flex-row gap-8">
+        <!-- Panel de control (izquierda) -->
+        <div class="w-full lg:w-1/3 flex flex-col gap-6">
+            <h1 class="text-3xl font-bold text-white font-['Playfair_Display']">Maestro de Ritmo Visual con IA</h1>
+            <p class="text-gray-400">Describe tu fondo y tu personaje por separado. La IA los generará y animará al ritmo de la música.</p>
+            
+            <div class="space-y-4">
+                <div>
+                    <label for="audioUpload" class="block text-sm font-medium text-gray-300">Cargar Canción (MP3/WAV):</label>
+                    <input type="file" id="audioUpload" accept="audio/*" class="w-full text-sm text-gray-400
+                        file:mr-4 file:py-2 file:px-4
+                        file:rounded-full file:border-0
+                        file:text-sm file:font-semibold
+                        file:bg-indigo-500 file:text-white
+                        hover:file:bg-indigo-600 cursor-pointer">
+                </div>
+                <div>
+                    <label for="backgroundPrompt" class="block text-sm font-medium text-gray-300">Descripción del Fondo:</label>
+                    <textarea id="backgroundPrompt" rows="3" placeholder="Ej: una ciudad futurista con rascacielos de neón" class="w-full p-3 border border-gray-600 bg-gray-700 text-white rounded-lg focus:ring-indigo-500 focus:border-indigo-500"></textarea>
+                </div>
+                <div>
+                    <label for="characterPrompt" class="block text-sm font-medium text-gray-300">Descripción del Personaje:</label>
+                    <textarea id="characterPrompt" rows="3" placeholder="Ej: un astronauta bailando, un coche saltando, un gato moviendo la cabeza" class="w-full p-3 border border-gray-600 bg-gray-700 text-white rounded-lg focus:ring-indigo-500 focus:border-indigo-500"></textarea>
+                </div>
+            </div>
+            
+            <button id="generateBtn" class="w-full bg-indigo-600 text-white font-bold py-3 px-6 rounded-xl shadow-lg hover:bg-indigo-700 transition-colors flex items-center justify-center gap-2">
+                Generar y Reproducir
+            </button>
+            <div id="loadingIndicator" class="hidden flex-col items-center justify-center py-2">
+                <div class="spinner"></div>
+                <p class="mt-2 text-gray-400" id="loadingText">Generando imágenes...</p>
+            </div>
+        </div>
+
+        <!-- Área de visualización (derecha) -->
+        <div class="w-full lg:w-2/3 flex items-center justify-center relative">
+            <canvas id="visualizerCanvas" class="w-full h-[500px] bg-gray-900 rounded-2xl shadow-inner"></canvas>
+            <div id="placeholder" class="absolute inset-0 flex items-center justify-center text-center text-gray-600 text-xl font-semibold">
+                <p>Carga una canción y describe tu escena para empezar.</p>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const audioUpload = document.getElementById('audioUpload');
+        const backgroundPromptInput = document.getElementById('backgroundPrompt');
+        const characterPromptInput = document.getElementById('characterPrompt');
+        const generateBtn = document.getElementById('generateBtn');
+        const loadingIndicator = document.getElementById('loadingIndicator');
+        const loadingText = document.getElementById('loadingText');
+        const visualizerCanvas = document.getElementById('visualizerCanvas');
+        const placeholder = document.getElementById('placeholder');
+        const ctx = visualizerCanvas.getContext('2d');
+
+        let audioContext, analyser, source, dataArray;
+        let animationFrameId;
+        let isPlaying = false;
+        let backgroundImage = new Image();
+        let characterImage = new Image();
+        let isBackgroundLoaded = false;
+        let isCharacterLoaded = false;
+
+        function resizeCanvas() {
+            visualizerCanvas.width = visualizerCanvas.clientWidth;
+            visualizerCanvas.height = visualizerCanvas.clientHeight;
+        }
+
+        window.addEventListener('resize', resizeCanvas);
+        resizeCanvas();
+
+        // Función para llamar a la API de generación de imágenes
+        async function generateAIImage(prompt, isCharacter = false) {
+            // Añadir un prompt específico para que el personaje tenga un fondo blanco o simple
+            // Esto ayuda a que el modelo no genere un fondo complejo para el personaje
+            const finalPrompt = isCharacter ? `${prompt} against a simple white background, no complex scene` : prompt;
+
+            const payload = { 
+                instances: { prompt: finalPrompt }, 
+                parameters: { "sampleCount": 1 } 
+            };
+            const apiKey = "";
+            const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/imagen-3.0-generate-002:predict?key=${apiKey}`;
+            
+            let response = null;
+            let retries = 0;
+            const maxRetries = 5;
+            const initialDelay = 1000; // 1 segundo
+
+            while (retries < maxRetries) {
+                try {
+                    response = await fetch(apiUrl, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(payload)
+                    });
+                    if (response.status !== 429) { // 429 Too Many Requests
+                        break;
+                    }
+                    retries++;
+                    const delay = initialDelay * Math.pow(2, retries - 1);
+                    console.log(`Retrying in ${delay}ms... (Retry ${retries})`);
+                    await new Promise(res => setTimeout(res, delay));
+                } catch (error) {
+                    console.error('Fetch error:', error);
+                    break;
+                }
+            }
+
+            if (!response || !response.ok) {
+                throw new Error('Failed to fetch image from API.');
+            }
+
+            const result = await response.json();
+            if (result.predictions && result.predictions.length > 0 && result.predictions[0].bytesBase64Encoded) {
+                return `data:image/png;base64,${result.predictions[0].bytesBase64Encoded}`;
+            } else {
+                throw new Error('Invalid API response structure or missing image data.');
+            }
+        }
+        
+        // Función principal para generar imagen y empezar a reproducir
+        generateBtn.addEventListener('click', async () => {
+            if (audioUpload.files.length === 0 || backgroundPromptInput.value.trim() === '' || characterPromptInput.value.trim() === '') {
+                return;
+            }
+
+            if (isPlaying) {
+                source.stop();
+                isPlaying = false;
+                generateBtn.textContent = 'Generar y Reproducir';
+                cancelAnimationFrame(animationFrameId);
+                return;
+            }
+
+            // Iniciar el proceso
+            loadingIndicator.classList.remove('hidden');
+            generateBtn.disabled = true;
+            placeholder.classList.add('hidden');
+            
+            try {
+                // Generar las dos imágenes en paralelo
+                loadingText.textContent = 'Generando fondo...';
+                const backgroundPromise = generateAIImage(backgroundPromptInput.value.trim());
+
+                loadingText.textContent = 'Generando personaje...';
+                const characterPromise = generateAIImage(characterPromptInput.value.trim(), true);
+
+                const [backgroundUrl, characterUrl] = await Promise.all([backgroundPromise, characterPromise]);
+
+                // Cargar las imágenes
+                loadingText.textContent = 'Cargando imágenes...';
+                
+                backgroundImage.onload = () => {
+                    isBackgroundLoaded = true;
+                    if (isCharacterLoaded) startAudioAndAnimation();
+                };
+                backgroundImage.onerror = () => {
+                    throw new Error('Error al cargar la imagen de fondo.');
+                };
+                backgroundImage.src = backgroundUrl;
+
+                characterImage.onload = () => {
+                    isCharacterLoaded = true;
+                    if (isBackgroundLoaded) startAudioAndAnimation();
+                };
+                characterImage.onerror = () => {
+                    throw new Error('Error al cargar la imagen del personaje.');
+                };
+                characterImage.src = characterUrl;
+                
+            } catch (error) {
+                console.error('Error al generar las imágenes:', error);
+                alert('Ocurrió un error al generar las imágenes. Inténtalo de nuevo.');
+                loadingIndicator.classList.add('hidden');
+                generateBtn.disabled = false;
+                generateBtn.innerHTML = 'Generar y Reproducir';
+            }
+        });
+
+        async function startAudioAndAnimation() {
+            try {
+                // Configurar el contexto de audio
+                audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                analyser = audioContext.createAnalyser();
+                analyser.fftSize = 256;
+                const bufferLength = analyser.frequencyBinCount;
+                dataArray = new Uint8Array(bufferLength);
+                
+                const file = audioUpload.files[0];
+                const arrayBuffer = await file.arrayBuffer();
+                const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
+                
+                source = audioContext.createBufferSource();
+                source.buffer = audioBuffer;
+                source.connect(analyser);
+                analyser.connect(audioContext.destination);
+
+                source.start(0);
+                isPlaying = true;
+                generateBtn.textContent = 'Detener';
+                
+                draw(); // Iniciar la animación
+                
+            } catch (error) {
+                console.error('Error al procesar el audio:', error);
+                alert('Ocurrió un error al cargar el audio. Inténtalo de nuevo.');
+            } finally {
+                loadingIndicator.classList.add('hidden');
+                generateBtn.disabled = false;
+            }
+        }
+
+        function draw() {
+            animationFrameId = requestAnimationFrame(draw);
+
+            analyser.getByteFrequencyData(dataArray);
+            
+            ctx.clearRect(0, 0, visualizerCanvas.width, visualizerCanvas.height);
+
+            if (isBackgroundLoaded) {
+                // Dibujar el fondo estático
+                ctx.drawImage(backgroundImage, 0, 0, visualizerCanvas.width, visualizerCanvas.height);
+            }
+            
+            if (isCharacterLoaded) {
+                const averageFrequency = dataArray.reduce((sum, value) => sum + value, 0) / dataArray.length;
+                const maxFrequency = Math.max(...dataArray);
+
+                // Calcular el rebote y el movimiento en base al ritmo para el personaje
+                const bounce = maxFrequency / 255 * 50; 
+                const scale = 1 + (maxFrequency / 255) * 0.1;
+                const rotation = (averageFrequency / 255) * 0.05 - 0.025;
+                
+                // Posición del personaje
+                const charWidth = visualizerCanvas.width * 0.4; // Ajustar tamaño del personaje
+                const charHeight = (charWidth / characterImage.width) * characterImage.height;
+                const x = (visualizerCanvas.width - charWidth) / 2;
+                const y = visualizerCanvas.height - charHeight - bounce - 20; // Posicionar en la parte inferior y mover hacia arriba
+
+                ctx.save();
+                ctx.translate(x + charWidth / 2, y + charHeight / 2);
+                ctx.rotate(rotation);
+                ctx.scale(scale, scale);
+                ctx.drawImage(characterImage, -charWidth / 2, -charHeight / 2, charWidth, charHeight);
+                ctx.restore();
+            }
+        }
+        
+        source?.addEventListener('ended', () => {
+            isPlaying = false;
+            generateBtn.textContent = 'Generar y Reproducir';
+            cancelAnimationFrame(animationFrameId);
+        });
+    </script>
+</body>
+</html>
